@@ -8,3 +8,5 @@ orbitcast_project/
 ├── export_patches.py # Data preprocessing script
 ├── train.py # Training pipeline script
 └── app.py # Streamlit Dashboard UI
+
+pip install torch torchvision numpy scipy h5py streamlit matplotlib opencv-python
