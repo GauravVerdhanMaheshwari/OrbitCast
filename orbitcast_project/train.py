@@ -46,7 +46,7 @@ def train_hybrid_orbitcast(epochs=15, batch_size=2, lr=1e-3):
         print(f"Epoch [{epoch:02d}/{epochs:02d}] - MSE Loss: {avg_loss:.6f}")
 
     # Save trained weights
-    save_path = Path("./orbitcast_project/models/hybrid_orbitcast.pth")
+    save_path = Path("./models/hybrid_orbitcast.pth")
     torch.save(model.state_dict(), save_path)
     print(f"\n[SUCCESS] Model checkpoint saved to: {save_path.resolve()}")
 

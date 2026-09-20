@@ -6,7 +6,7 @@ from pathlib import Path
 
 # --- Multi-Modal PyTorch Dataset Loader ---
 class MultiModalINSATDataset(Dataset):
-    def __init__(self, patches_dir="./orbitcast_project/processed_patches", seq_len=4, pred_len=4):
+    def __init__(self, patches_dir="./processed_patches", seq_len=4, pred_len=4):
         self.patches_dir = Path(patches_dir)
         self.seq_len = seq_len
         self.pred_len = pred_len
