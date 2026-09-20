@@ -1,2 +1,3 @@
 clean.py
 orbitcast_project/raw_data/
+**/raw_data/
