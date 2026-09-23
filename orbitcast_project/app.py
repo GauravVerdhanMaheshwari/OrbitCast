@@ -96,35 +96,34 @@ def estimate_imd_from_satellite(image_tensor):
 
 
 def generate_xai_text_narrative(code, wind_speed, heatmap):
-  """Translates visual feature maps into plain English explanations for non-experts."""
   active_pixel_ratio = np.sum(heatmap > 0.6) / heatmap.size
 
   narrative = []
   narrative.append(
       f"• **Primary Focus Area:** The model concentrated **{active_pixel_ratio*100:.1f}%**"
-      " of its attention on the dense, central cloud mass (shown in red/yellow"
-      " on the heatmap)."
+      " of its spatial attention on the central convective cloud mass"
+      " (highlighted in warmer red/orange tones on the heatmap)."
   )
 
   if wind_speed >= 34:
     narrative.append(
-        "• **Key Driver:** High cloud-top density and deep convective core"
-        " signals are strong. The network identified active cloud wall symmetry,"
-        f" justifying the **{code}** stage."
+        "• **Key Feature Signal:** Strong cloud-top height and symmetric core"
+        " signals were detected, driving the classification toward"
+        f" **{code}**."
     )
     narrative.append(
-        "• **Forecast Reasoning:** Because the central core remains tightly"
-        " organized from T=0 to T+1, the model projects continued or sustained"
-        " wind speeds."
+        "• **Forecast Dynamics:** Because the core cloud structural density"
+        " remains well-defined from T=0 to T+1, the network models sustained"
+        " momentum."
     )
   else:
     narrative.append(
-        "• **Key Driver:** Cloud patterns appear fragmented with lower top"
-        " temperatures, indicating weak atmospheric organization."
+        "• **Key Feature Signal:** Cloud patterns appear disorganized with lower"
+        " vertical convection."
     )
     narrative.append(
-        "• **Forecast Reasoning:** Lack of a concentrated storm center keeps the"
-        " predicted wind speeds in lower threshold ranges."
+        "• **Forecast Dynamics:** Low atmospheric organization keeps projected"
+        " sustained wind speeds within lower operational bands."
     )
 
   return "\n\n".join(narrative)
@@ -149,6 +148,7 @@ def load_model():
   return model, device
 
 
+# --- Header ---
 st.title("🌀 OrbitCast-XAI: IMD Cyclone Pattern Intelligence")
 st.caption(
     "Ministry of Earth Sciences (MoES) - India Meteorological Department (IMD)"
@@ -158,7 +158,7 @@ st.caption(
 st.markdown("---")
 model, device = load_model()
 
-# --- Sidebar Input Section ---
+# --- Sidebar Inputs ---
 st.sidebar.header("📁 Satellite Input Selection")
 uploaded_file = st.sidebar.file_uploader(
     "Drag & Drop INSAT .npz Patch:", type=["npz"]
@@ -202,11 +202,15 @@ if st.sidebar.button("Run Cyclone Analysis & Forecast", type="primary"):
 
   # --- Top Operational Metrics ---
   st.subheader("📊 Operational Cyclone Metrics")
-  c1, c2, c3 = st.columns(3)
+  c1, c2, c3 = st.columns([1.2, 1, 1])
 
   with c1:
+    # Uses short code in value and full name in help tooltip to prevent truncation
     st.metric(
-        label="IMD Classification Stage", value=f"{icon} {code} ({stage_name})"
+        label="IMD Classification Stage",
+        value=f"{icon} {code}",
+        delta=stage_name,
+        delta_color="off",
     )
   with c2:
     st.metric(
@@ -222,44 +226,49 @@ if st.sidebar.button("Run Cyclone Analysis & Forecast", type="primary"):
   st.caption(f"**Structural Feature Flag:** {feature_desc}")
   st.markdown("---")
 
-  # --- Forecast & Visualizations ---
-  col_left, col_right = st.columns([1, 1])
+  # --- Visualizations ---
+  col_left, col_right = st.columns(2)
 
   with col_left:
     st.subheader("🛰️ Spatio-Temporal Satellite Forecast")
-    fig, axes = plt.subplots(1, 2, figsize=(10, 5))
+    # Equalized aspect ratio for side-by-side frames
+    fig_seq, axes = plt.subplots(1, 2, figsize=(8, 4.5))
 
     axes[0].imshow(img_data[0, 0].cpu().numpy(), cmap="gist_ncar")
-    axes[0].set_title("Input Frame (T=0)")
+    axes[0].set_title("Input Frame (T=0)", fontsize=10)
     axes[0].axis("off")
 
     axes[1].imshow(pred_frame[0, 0].cpu().numpy(), cmap="gist_ncar")
-    axes[1].set_title("Forecasted Frame (T+1)")
+    axes[1].set_title("Forecasted Frame (T+1)", fontsize=10)
     axes[1].axis("off")
 
     plt.tight_layout()
-    st.pyplot(fig)
+    st.pyplot(fig_seq, use_container_width=True)
 
   with col_right:
     st.subheader("🔍 Explainable AI (Grad-CAM / Attention)")
-
     img_np = img_data[0, 0].cpu().numpy()
+
     heatmap = np.clip(img_np - np.mean(img_np), 0, None)
     heatmap = heatmap / (np.max(heatmap) + 1e-8)
 
-    fig_xai, ax_xai = plt.subplots(figsize=(6, 5))
+    # Matched height scale with the left figure
+    fig_xai, ax_xai = plt.subplots(figsize=(5, 4.5))
     ax_xai.imshow(img_np, cmap="gray")
     ax_xai.imshow(heatmap, cmap="jet", alpha=0.5)
-    ax_xai.set_title("Feature Activation Heatmap")
+    ax_xai.set_title("Feature Activation Heatmap", fontsize=10)
     ax_xai.axis("off")
 
     plt.tight_layout()
-    st.pyplot(fig_xai)
+    st.pyplot(fig_xai, use_container_width=True)
 
-  # --- Human-Readable XAI Section ---
+  # --- XAI Narrative Box ---
   st.markdown("### 📝 Plain-English Model Insights (XAI Report)")
   xai_text = generate_xai_text_narrative(code, estimated_wind_kts, heatmap)
   st.info(xai_text)
 
 else:
-  st.info("👈 Upload an .npz file or select a patch, then click **Run Cyclone Analysis & Forecast**.")
+  st.info(
+      "👈 Upload an .npz file or select a patch, then click **Run Cyclone"
+      " Analysis & Forecast**."
+  )
