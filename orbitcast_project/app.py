@@ -38,30 +38,34 @@ uploaded_file = st.sidebar.file_uploader("Upload custom .npz patch", type=["npz"
 patch_dir = Path("./processed_patches")
 patch_files = sorted(list(patch_dir.glob("*.npz")))
 
+# Forecast Step Slider (t + 1 to t + 4)
+forecast_step = st.sidebar.slider(
+    "Forecast Time Horizon (t + N)", min_value=1, max_value=4, value=1
+)
+
+target_gt_path = None
+
 if uploaded_file is not None:
   curr_data = np.load(uploaded_file)
   selected_name = uploaded_file.name
-  next_patch_path = None
 elif patch_files:
   selected_patch_path = st.sidebar.selectbox(
       "Select Dataset Patch (t_0)", patch_files, format_func=lambda p: p.name
   )
   curr_data = np.load(selected_patch_path)
   selected_name = selected_patch_path.name
-  
+
+  # Search for Ground Truth matching t + forecast_step
   match = re.search(r"(\d+)", selected_name)
-  next_patch_path = None
   if match:
     curr_idx = int(match.group(1))
-    possible_next = patch_dir / f"patch_{curr_idx + 1:04d}.npz"
-    if possible_next.exists():
-      next_patch_path = possible_next
+    target_idx = curr_idx + forecast_step
+    possible_gt = patch_dir / f"patch_{target_idx:04d}.npz"
+    if possible_gt.exists():
+      target_gt_path = possible_gt
 else:
   st.error("No `.npz` files found! Upload a patch or run preprocessing.")
   st.stop()
-
-# Multi-Step Time Horizon Slider
-forecast_step = st.sidebar.slider("Forecast Time Horizon (t + N)", min_value=1, max_value=4, value=1)
 
 colormap = st.sidebar.selectbox(
     "Visualization Mode",
@@ -76,7 +80,7 @@ elif "Blues" in colormap:
 
 channel_idx = 1 if "Blues" in colormap else 0
 
-# 4. Process Inputs & Run Multi-Step Inference
+# 4. Input Preprocessing
 img_raw = curr_data["image"]
 vec_raw = curr_data["vector"]
 
@@ -96,18 +100,25 @@ if vec_tensor.shape[-1] != 6:
   vec_padded[..., : min(6, vec_tensor.shape[-1])] = vec_tensor[..., : min(6, vec_tensor.shape[-1])]
   vec_tensor = vec_padded
 
-# Autoregressive Rollout up to selected forecast_step
-curr_input = img_tensor.to(device)
+# Autoregressive Multi-Step Inferences
+curr_img_seq = img_tensor.to(device)
 v_input = vec_tensor.to(device)
 
+pred_frames = []
 with torch.no_grad():
-  for _ in range(forecast_step):
-    pred_tensor = model(curr_input, v_input)
-    if pred_tensor.ndim == 4:
-      curr_input = pred_tensor.unsqueeze(1)
+  for step in range(forecast_step):
+    pred_step = model(curr_img_seq, v_input)
+    if pred_step.ndim == 4:
+      next_frame = pred_step.unsqueeze(1)
     else:
-      curr_input = pred_tensor
+      next_frame = pred_step
+    
+    pred_frames.append(next_frame.squeeze(1))
+    # Slide the input window forward with new prediction
+    curr_img_seq = torch.cat([curr_img_seq[:, 1:], next_frame], dim=1)
 
+# Extract frame corresponding to current slider position
+pred_tensor = pred_frames[-1]
 pred_np = pred_tensor.cpu().numpy()
 
 def process_slice(data_array, ch_idx=0):
@@ -124,10 +135,10 @@ def process_slice(data_array, ch_idx=0):
 input_slice = process_slice(img_raw, channel_idx)
 pred_slice = process_slice(pred_np, channel_idx)
 
-# Compute XAI Residual Motion Heatmap (|Pred - Input|)
+# Explainable Motion Heatmap (|Pred - Input|)
 motion_heatmap = np.abs(pred_slice - input_slice)
 
-# 5. Display 4-Column SIH Dashboard Layout
+# 5. Dashboard Layout
 col1, col2, col3, col4 = st.columns(4)
 
 with col1:
@@ -152,14 +163,14 @@ with col3:
   st.pyplot(fig3)
 
 with col4:
-  if next_patch_path and forecast_step == 1:
-    st.markdown(f"**4. Ground Truth ($t+1$)**\n`{next_patch_path.name}`")
-    gt_data = np.load(next_patch_path)
+  if target_gt_path:
+    st.markdown(f"**4. Ground Truth ($t+{forecast_step}$)**\n`{target_gt_path.name}`")
+    gt_data = np.load(target_gt_path)
     gt_slice = process_slice(gt_data["image"], channel_idx)
     fig4, ax4 = plt.subplots(figsize=(3.5, 3.5))
     ax4.imshow(gt_slice, cmap=cmap_name)
     ax4.axis("off")
     st.pyplot(fig4)
   else:
-    st.markdown(f"**4. Target Horizon ($t+{forecast_step}$)**")
-    st.info("Autoregressive prediction mode active.")
+    st.markdown(f"**4. Ground Truth ($t+{forecast_step}$)**")
+    st.info(f"No patch file found for index t+{forecast_step}.")
