@@ -2,5 +2,4 @@ clean.py
 orbitcast_project/raw_data/
 **/raw_data/
 
-orbitcast_project/raw_data/
-orbitcast_project/processed_patches/
+# orbitcast_project/processed_patches/
