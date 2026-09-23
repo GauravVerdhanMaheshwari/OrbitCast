@@ -1,8 +1,4 @@
-torch
-torchvision
-pytorch-msssim
 streamlit
+torch
 matplotlib
 numpy
-h5py
-scipyo
