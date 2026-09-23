@@ -19,24 +19,18 @@ class MultiModalINSATDataset(Dataset):
     return max(0, self.total_samples)
 
   def __getitem__(self, idx):
-    # Historical inputs (T-3 to T_0)
     x_files = self.patch_files[idx : idx + self.seq_len]
     x_imgs = [np.load(f)["image"] for f in x_files]
     x_vecs = [np.load(f)["vector"] for f in x_files]
 
-    # Target future images (T+1 to T+4)
     y_files = self.patch_files[
         idx + self.seq_len : idx + self.seq_len + self.pred_len
     ]
     y_imgs = [np.load(f)["image"] for f in y_files]
 
-    x_img_tensor = torch.from_numpy(
-        np.stack(x_imgs, axis=0)
-    )  # Shape: (Seq, 4, H, W)
-    x_vec_tensor = torch.from_numpy(np.stack(x_vecs, axis=0))  # Shape: (Seq, 6)
-    y_img_tensor = torch.from_numpy(
-        np.stack(y_imgs, axis=0)
-    )  # Shape: (Pred, 4, H, W)
+    x_img_tensor = torch.from_numpy(np.stack(x_imgs, axis=0))
+    x_vec_tensor = torch.from_numpy(np.stack(x_vecs, axis=0))
+    y_img_tensor = torch.from_numpy(np.stack(y_imgs, axis=0))
 
     return (x_img_tensor, x_vec_tensor), y_img_tensor
 
@@ -70,7 +64,7 @@ class ConvLSTMCell(nn.Module):
     return h_next, c_next
 
 
-# --- Hybrid Dual-Branch Neural Network with Residual Connections ---
+# --- Hybrid Dual-Branch Neural Network ---
 class HybridOrbitCastNet(nn.Module):
 
   def __init__(self, in_channels=4, vector_dim=6, hidden_dim=64):
@@ -90,10 +84,12 @@ class HybridOrbitCastNet(nn.Module):
         nn.ReLU(),
     )
 
-    # Fusion Convolution (Merges spatial and tabular embeddings)
-    self.fusion_conv = nn.Conv2d(hidden_dim + 64, hidden_dim, kernel_size=3, padding=1)
+    # Fusion Convolution
+    self.fusion_conv = nn.Conv2d(
+        hidden_dim + 64, hidden_dim, kernel_size=3, padding=1
+    )
 
-    # Decoder Head (Predicts frame movement/delta)
+    # Decoder Head
     self.decoder = nn.Sequential(
         nn.Conv2d(hidden_dim, hidden_dim // 2, kernel_size=3, padding=1),
         nn.ReLU(),
@@ -101,11 +97,10 @@ class HybridOrbitCastNet(nn.Module):
     )
 
   def forward(self, x_img, x_vec):
-    # Standardize input dimensions
     if x_img.ndim == 4:
-      x_img = x_img.unsqueeze(1)  # Expand (B, C, H, W) -> (B, 1, C, H, W)
+      x_img = x_img.unsqueeze(1)
     if x_vec.ndim == 2:
-      x_vec = x_vec.unsqueeze(1)  # Expand (B, V) -> (B, 1, V)
+      x_vec = x_vec.unsqueeze(1)
 
     b, seq, c, h, w = x_img.shape
     device = x_img.device
@@ -113,23 +108,22 @@ class HybridOrbitCastNet(nn.Module):
     h_state = torch.zeros(b, self.hidden_dim, h, w, device=device)
     c_state = torch.zeros(b, self.hidden_dim, h, w, device=device)
 
-    # Pass historical image sequence through ConvLSTM
     for t in range(seq):
       h_state, c_state = self.spatial_cell(x_img[:, t], h_state, c_state)
 
-    # Encode vector data from last frame
-    v_emb = self.vector_mlp(x_vec[:, -1])  # (B, 64)
-    v_emb_spatial = v_emb.unsqueeze(-1).unsqueeze(-1).expand(-1, -1, h, w)  # (B, 64, H, W)
+    v_emb = self.vector_mlp(x_vec[:, -1])
+    v_emb_spatial = (
+        v_emb.unsqueeze(-1).unsqueeze(-1).expand(-1, -1, h, w)
+    )
 
-    # Latent Feature Fusion
     fused = torch.cat([h_state, v_emb_spatial], dim=1)
     latent = torch.relu(self.fusion_conv(fused))
 
-    # Predict Delta (Residual Update)
+    # Predict delta update
     delta = self.decoder(latent)
 
-    # Residual Connection: Add predicted delta to the most recent input frame (t_0)
-    last_input_frame = x_img[:, -1]  # (B, 4, H, W)
-    out_frame = torch.sigmoid(last_input_frame + delta)
+    # Scaled residual update prevents over-smoothing during multi-step rollout
+    last_input_frame = x_img[:, -1]
+    out_frame = torch.clamp(last_input_frame + (0.2 * delta), 0.0, 1.0)
 
-    return out_frame  # Returns tensor shaped (B, 4, H, W)
+    return out_frame
