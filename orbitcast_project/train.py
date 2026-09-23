@@ -1,18 +1,17 @@
-import gc
 from pathlib import Path
 from model_def import HybridOrbitCastNet, MultiModalINSATDataset
-from pytorch_msssim import SSIM
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
 
 
-# Edge/Gradient Loss to force sharp high-frequency details
-class GradientLoss(nn.Module):
+class CombinedEdgeLoss(nn.Module):
 
-  def __init__(self):
-    super().__init__()
+  def __init__(self, l1_weight=0.8, grad_weight=0.2):
+    super(CombinedEdgeLoss, self).__init__()
+    self.l1 = nn.L1Loss()
+
     kernel_x = (
         torch.tensor([[-1, 0, 1], [-2, 0, 2], [-1, 0, 1]], dtype=torch.float32)
         .unsqueeze(0)
@@ -23,114 +22,110 @@ class GradientLoss(nn.Module):
         .unsqueeze(0)
         .unsqueeze(0)
     )
+
     self.register_buffer("kernel_x", kernel_x)
     self.register_buffer("kernel_y", kernel_y)
+    self.grad_weight = grad_weight
 
   def forward(self, pred, target):
-    # Expand kernels across 4 channels
-    kx = self.kernel_x.repeat(pred.shape[1], 1, 1, 1)
-    ky = self.kernel_y.repeat(pred.shape[1], 1, 1, 1)
+    l1_loss = self.l1(pred, target)
 
-    pred_grad_x = F.conv2d(pred, kx, padding=1, groups=pred.shape[1])
-    pred_grad_y = F.conv2d(pred, ky, padding=1, groups=pred.shape[1])
-    target_grad_x = F.conv2d(target, kx, padding=1, groups=target.shape[1])
-    target_grad_y = F.conv2d(target, ky, padding=1, groups=target.shape[1])
+    b, c, h, w = pred.shape
+    kx = self.kernel_x.repeat(c, 1, 1, 1).to(pred.device)
+    ky = self.kernel_y.repeat(c, 1, 1, 1).to(pred.device)
 
-    return F.l1_loss(pred_grad_x, target_grad_x) + F.l1_loss(
+    pred_grad_x = F.conv2d(pred, kx, padding=1, groups=c)
+    pred_grad_y = F.conv2d(pred, ky, padding=1, groups=c)
+    target_grad_x = F.conv2d(target, kx, padding=1, groups=c)
+    target_grad_y = F.conv2d(target, ky, padding=1, groups=c)
+
+    grad_loss = self.l1(pred_grad_x, target_grad_x) + self.l1(
         pred_grad_y, target_grad_y
     )
 
-
-class SharpnessLoss(nn.Module):
-
-  def __init__(self):
-    super().__init__()
-    self.l1 = nn.L1Loss()
-    # win_size=3 captures fine micro-textures on cropped patches
-    self.ssim = SSIM(data_range=1.0, channel=4, spatial_dims=2, win_size=3)
-    self.grad = GradientLoss()
-
-  def forward(self, pred, target):
-    if pred.ndim == 5:
-      b, s, c, h, w = pred.shape
-      pred = pred.view(b * s, c, h, w)
-      target = target.view(b * s, c, h, w)
-
-    l1_loss = self.l1(pred, target)
-    ssim_loss = 1.0 - self.ssim(pred, target)
-    grad_loss = self.grad(pred, target)
-
-    # Balanced weight blend
-    return (0.3 * l1_loss) + (0.4 * ssim_loss) + (0.3 * grad_loss)
+    return l1_loss + (self.grad_weight * grad_loss)
 
 
-def train_hybrid_orbitcast(
-    epochs=25, batch_size=4, lr=1e-3, forecast_steps=4
-):
+def train_model():
   device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-  print(
-      f"--- Training Hybrid OrbitCast-XAI (Multi-Step t+{forecast_steps}) on:"
-      f" {device} ---"
-  )
+  print(f"Training on device: {device}")
 
-  dataset = MultiModalINSATDataset(seq_len=1, pred_len=forecast_steps)
-  if len(dataset) == 0:
-    print("[ERROR] No valid patches found in ./processed_patches/")
-    return
-
-  loader = DataLoader(
-      dataset, batch_size=batch_size, shuffle=True, drop_last=True
-  )
-
-  model = HybridOrbitCastNet(in_channels=4, vector_dim=6, hidden_dim=64).to(
-      device
-  )
-  optimizer = torch.optim.Adam(model.parameters(), lr=lr)
-  criterion = SharpnessLoss().to(device)
-
-  step_weights = [1.0, 0.8, 0.6, 0.4]
-
-  model.train()
-  for epoch in range(1, epochs + 1):
-    running_loss = 0.0
-    for (x_img, x_vec), y_img in loader:
-      x_img, x_vec, y_img = (
-          x_img.to(device),
-          x_vec.to(device),
-          y_img.to(device),
-      )
-
-      optimizer.zero_grad()
-      current_img = x_img
-      total_loss = 0.0
-
-      for t in range(forecast_steps):
-        pred_step = model(current_img, x_vec)
-        target_step = y_img[:, t] if y_img.ndim == 5 else y_img
-
-        step_loss = criterion(pred_step, target_step)
-        total_loss += step_weights[t] * step_loss
-
-        # Detach gradient on rollout to keep step-wise training fast
-        current_img = pred_step.detach()
-
-      total_loss.backward()
-      optimizer.step()
-      running_loss += total_loss.item()
-
-    avg_loss = running_loss / len(loader)
-    print(f"Epoch [{epoch:02d}/{epochs:02d}] - Multi-Step Loss: {avg_loss:.6f}")
-
-  save_dir = Path("./models")
-  save_dir.mkdir(exist_ok=True)
-  save_path = save_dir / "hybrid_orbitcast.pth"
-  torch.save(model.state_dict(), save_path)
-  print(f"\n[SUCCESS] Model checkpoint saved to: {save_path.resolve()}")
-
-  gc.collect()
   if torch.cuda.is_available():
     torch.cuda.empty_cache()
 
+  dataset = MultiModalINSATDataset(
+      patches_dir="./processed_patches", seq_len=4, pred_len=4
+  )
+  if len(dataset) == 0:
+    print("No patch samples found in ./processed_patches!")
+    return
+
+  dataloader = DataLoader(dataset, batch_size=2, shuffle=True)
+  model = HybridOrbitCastNet(in_channels=4, vector_dim=6, hidden_dim=64).to(
+      device
+  )
+
+  optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
+  criterion = CombinedEdgeLoss()
+  scaler = torch.amp.GradScaler("cuda") if torch.cuda.is_available() else None
+
+  models_dir = Path("./models")
+  models_dir.mkdir(exist_ok=True)
+
+  epochs = 10
+  model.train()
+
+  for epoch in range(epochs):
+    running_loss = 0.0
+    for (x_img, x_vec), y_img in dataloader:
+      x_img = x_img.float().to(device)
+      x_vec = x_vec.float().to(device)
+      y_img = y_img.float().to(device)
+
+      optimizer.zero_grad()
+      curr_seq = x_img
+      total_loss = 0.0
+
+      if torch.cuda.is_available():
+        with torch.amp.autocast("cuda"):
+          for step in range(y_img.shape[1]):
+            target_frame = y_img[:, step]
+            pred_frame = model(curr_seq, x_vec)
+
+            loss = criterion(pred_frame, target_frame)
+            total_loss = total_loss + loss
+
+            next_frame_input = pred_frame.detach().unsqueeze(1)
+            curr_seq = torch.cat([curr_seq[:, 1:], next_frame_input], dim=1)
+
+          total_loss = total_loss / y_img.shape[1]
+
+        scaler.scale(total_loss).backward()
+        scaler.step(optimizer)
+        scaler.update()
+      else:
+        for step in range(y_img.shape[1]):
+          target_frame = y_img[:, step]
+          pred_frame = model(curr_seq, x_vec)
+
+          loss = criterion(pred_frame, target_frame)
+          total_loss = total_loss + loss
+
+          next_frame_input = pred_frame.detach().unsqueeze(1)
+          curr_seq = torch.cat([curr_seq[:, 1:], next_frame_input], dim=1)
+
+        total_loss = total_loss / y_img.shape[1]
+        total_loss.backward()
+        optimizer.step()
+
+      running_loss += total_loss.item()
+
+    avg_loss = running_loss / len(dataloader)
+    print(f"Epoch [{epoch+1}/{epochs}] - Loss: {avg_loss:.5f}")
+
+  torch.save(model.state_dict(), models_dir / "hybrid_orbitcast.pth")
+  print("Model saved to ./models/hybrid_orbitcast.pth")
+
 
 if __name__ == "__main__":
-  train_hybrid_orbitcast(epochs=25, batch_size=4, lr=1e-3, forecast_steps=4)
+  train_model()
