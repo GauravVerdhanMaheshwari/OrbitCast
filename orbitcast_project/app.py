@@ -5,6 +5,11 @@ import numpy as np
 import streamlit as st
 import torch
 
+# Base directory relative to app.py location
+BASE_DIR = Path(__file__).parent.resolve()
+MODEL_PATH = BASE_DIR / "models" / "hybrid_orbitcast.pth"
+PATCHES_DIR = BASE_DIR / "processed_patches"
+
 st.set_page_config(
     page_title="OrbitCast-XAI | IMD Cyclone Intelligence",
     page_icon="🌀",
@@ -133,22 +138,21 @@ def generate_xai_text_narrative(code, wind_speed, heatmap):
 def load_model():
   device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
   model = HybridOrbitCastNet(in_channels=4, vector_dim=6, hidden_dim=64)
-  model_path = Path("./models/hybrid_orbitcast.pth")
 
-  if model_path.exists():
+  if MODEL_PATH.exists():
     model.load_state_dict(
-        torch.load(model_path, map_location=device, weights_only=True)
+        torch.load(MODEL_PATH, map_location=device, weights_only=True)
     )
     st.sidebar.success("Loaded model: hybrid_orbitcast.pth")
   else:
-    st.sidebar.warning("Checkpoint missing in ./models")
+    st.sidebar.warning(f"Checkpoint missing at path: {MODEL_PATH}")
 
   model.to(device)
   model.eval()
   return model, device
 
 
-# --- Header ---
+# --- UI Layout ---
 st.title("🌀 OrbitCast-XAI: IMD Cyclone Pattern Intelligence")
 st.caption(
     "Ministry of Earth Sciences (MoES) - India Meteorological Department (IMD)"
@@ -158,18 +162,18 @@ st.caption(
 st.markdown("---")
 model, device = load_model()
 
-# --- Sidebar Inputs ---
 st.sidebar.header("📁 Satellite Input Selection")
 uploaded_file = st.sidebar.file_uploader(
     "Drag & Drop INSAT .npz Patch:", type=["npz"]
 )
 
-patches_dir = Path("./processed_patches")
 patch_files = (
-    sorted(list(patches_dir.glob("patch_*.npz")))
-    if patches_dir.exists()
+    sorted(list(PATCHES_DIR.glob("patch_*.npz")))
+    if PATCHES_DIR.exists()
     else []
 )
+
+data = None
 
 if uploaded_file is not None:
   data = np.load(uploaded_file)
@@ -182,93 +186,89 @@ elif patch_files:
   )
   data = np.load(selected_patch_file)
 else:
-  st.error("Please upload an .npz patch or add files to `./processed_patches`.")
-  st.stop()
-
-if st.sidebar.button("Run Cyclone Analysis & Forecast", type="primary"):
-  img_data = (
-      torch.from_numpy(data["image"]).unsqueeze(0).float().to(device)
-  )  # [1, 4, H, W]
-  vec_data = (
-      torch.from_numpy(data["vector"]).unsqueeze(0).float().to(device)
-  )  # [1, 6]
-
-  with torch.no_grad():
-    pred_frame = model(img_data, vec_data)
-
-  code, stage_name, wind_range, icon, estimated_wind_kts, feature_desc = (
-      estimate_imd_from_satellite(img_data)
+  st.sidebar.warning(
+      "No default patches on server. Upload an .npz file above to analyze."
   )
 
-  # --- Top Operational Metrics ---
-  st.subheader("📊 Operational Cyclone Metrics")
-  c1, c2, c3 = st.columns([1.2, 1, 1])
+if data is not None:
+  if st.sidebar.button("Run Cyclone Analysis & Forecast", type="primary"):
+    img_data = (
+        torch.from_numpy(data["image"]).unsqueeze(0).float().to(device)
+    )  # [1, 4, H, W]
+    vec_data = (
+        torch.from_numpy(data["vector"]).unsqueeze(0).float().to(device)
+    )  # [1, 6]
 
-  with c1:
-    # Uses short code in value and full name in help tooltip to prevent truncation
-    st.metric(
-        label="IMD Classification Stage",
-        value=f"{icon} {code}",
-        delta=stage_name,
-        delta_color="off",
-    )
-  with c2:
-    st.metric(
-        label="Est. Sustained Wind Speed", value=f"{estimated_wind_kts:.1f} kts"
-    )
-  with c3:
-    st.metric(
-        label="Intensity Threshold Range",
-        value=wind_range,
-        delta="IMD Standard",
+    with torch.no_grad():
+      pred_frame = model(img_data, vec_data)
+
+    code, stage_name, wind_range, icon, estimated_wind_kts, feature_desc = (
+        estimate_imd_from_satellite(img_data)
     )
 
-  st.caption(f"**Structural Feature Flag:** {feature_desc}")
-  st.markdown("---")
+    st.subheader("📊 Operational Cyclone Metrics")
+    c1, c2, c3 = st.columns([1.2, 1, 1])
 
-  # --- Visualizations ---
-  col_left, col_right = st.columns(2)
+    with c1:
+      st.metric(
+          label="IMD Classification Stage",
+          value=f"{icon} {code}",
+          delta=stage_name,
+          delta_color="off",
+      )
+    with c2:
+      st.metric(
+          label="Est. Sustained Wind Speed",
+          value=f"{estimated_wind_kts:.1f} kts",
+      )
+    with c3:
+      st.metric(
+          label="Intensity Threshold Range",
+          value=wind_range,
+          delta="IMD Standard",
+      )
 
-  with col_left:
-    st.subheader("🛰️ Spatio-Temporal Satellite Forecast")
-    # Equalized aspect ratio for side-by-side frames
-    fig_seq, axes = plt.subplots(1, 2, figsize=(8, 4.5))
+    st.caption(f"**Structural Feature Flag:** {feature_desc}")
+    st.markdown("---")
 
-    axes[0].imshow(img_data[0, 0].cpu().numpy(), cmap="gist_ncar")
-    axes[0].set_title("Input Frame (T=0)", fontsize=10)
-    axes[0].axis("off")
+    col_left, col_right = st.columns(2)
 
-    axes[1].imshow(pred_frame[0, 0].cpu().numpy(), cmap="gist_ncar")
-    axes[1].set_title("Forecasted Frame (T+1)", fontsize=10)
-    axes[1].axis("off")
+    with col_left:
+      st.subheader("🛰️ Spatio-Temporal Satellite Forecast")
+      fig_seq, axes = plt.subplots(1, 2, figsize=(8, 4.5))
 
-    plt.tight_layout()
-    st.pyplot(fig_seq, use_container_width=True)
+      axes[0].imshow(img_data[0, 0].cpu().numpy(), cmap="gist_ncar")
+      axes[0].set_title("Input Frame (T=0)", fontsize=10)
+      axes[0].axis("off")
 
-  with col_right:
-    st.subheader("🔍 Explainable AI (Grad-CAM / Attention)")
-    img_np = img_data[0, 0].cpu().numpy()
+      axes[1].imshow(pred_frame[0, 0].cpu().numpy(), cmap="gist_ncar")
+      axes[1].set_title("Forecasted Frame (T+1)", fontsize=10)
+      axes[1].axis("off")
 
-    heatmap = np.clip(img_np - np.mean(img_np), 0, None)
-    heatmap = heatmap / (np.max(heatmap) + 1e-8)
+      plt.tight_layout()
+      st.pyplot(fig_seq, use_container_width=True)
 
-    # Matched height scale with the left figure
-    fig_xai, ax_xai = plt.subplots(figsize=(5, 4.5))
-    ax_xai.imshow(img_np, cmap="gray")
-    ax_xai.imshow(heatmap, cmap="jet", alpha=0.5)
-    ax_xai.set_title("Feature Activation Heatmap", fontsize=10)
-    ax_xai.axis("off")
+    with col_right:
+      st.subheader("🔍 Explainable AI (Grad-CAM / Attention)")
+      img_np = img_data[0, 0].cpu().numpy()
 
-    plt.tight_layout()
-    st.pyplot(fig_xai, use_container_width=True)
+      heatmap = np.clip(img_np - np.mean(img_np), 0, None)
+      heatmap = heatmap / (np.max(heatmap) + 1e-8)
 
-  # --- XAI Narrative Box ---
-  st.markdown("### 📝 Plain-English Model Insights (XAI Report)")
-  xai_text = generate_xai_text_narrative(code, estimated_wind_kts, heatmap)
-  st.info(xai_text)
+      fig_xai, ax_xai = plt.subplots(figsize=(5, 4.5))
+      ax_xai.imshow(img_np, cmap="gray")
+      ax_xai.imshow(heatmap, cmap="jet", alpha=0.5)
+      ax_xai.set_title("Feature Activation Heatmap", fontsize=10)
+      ax_xai.axis("off")
 
+      plt.tight_layout()
+      st.pyplot(fig_xai, use_container_width=True)
+
+    st.markdown("### 📝 Plain-English Model Insights (XAI Report)")
+    xai_text = generate_xai_text_narrative(code, estimated_wind_kts, heatmap)
+    st.info(xai_text)
 else:
   st.info(
-      "👈 Upload an .npz file or select a patch, then click **Run Cyclone"
-      " Analysis & Forecast**."
+      "👈 Upload an `.npz` patch in the sidebar or select a pre-loaded sample to"
+      " get started."
   )
