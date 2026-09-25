@@ -1,88 +1,94 @@
-# 🚀 OrbitCast
+# OrbitCast-XAI: Spatio-Temporal Cyclone Nowcasting & Explainable AI Dashboard
 
-> **An end-to-end satellite imagery processing and deep learning pipeline for cyclone tracking using INSAT-3D data.**
+[![Streamlit App](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://orbitcast-xai.streamlit.app/)
+[![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
+[![PyTorch](https://img.shields.io/badge/PyTorch-EE4C2C?style=flat&logo=pytorch&logoColor=white)](https://pytorch.org/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-![Python Version](https://shields.io)
-![Framework](https://shields.io)
-![UI](https://shields.io)
-![License](https://shields.io)
+> **Live Interactive Dashboard:** [orbitcast-xai.streamlit.app](https://orbitcast-xai.streamlit.app/)
 
-## 📌 Overview
+OrbitCast-XAI is an end-to-end deep learning framework and operational dashboard designed for **real-time satellite-based cyclone nowcasting, intensity stage classification, and explainable AI (XAI) feature activation**.
 
-OrbitCast is a complete machine learning workflow designed to ingest, process, and visualize **INSAT-3D meteorological satellite data**. The system extracts **4-channel spatial patches** from raw satellite `.h5` files, formats them for PyTorch deep learning models to track or predict cyclonic activity, and serves the predictions via an interactive Streamlit web dashboard.
-
-## ✨ Key Features
-
-- **Raw HDF5 Ingestion:** Efficiently parses heavy `.h5` scientific data structures directly from INSAT-3D downloads.
-- **4-Channel Patch Generation:** Preprocesses and exports multi-spectral data into standardized, model-ready `.npz` patches.
-- **PyTorch Integration:** Includes a custom dataset pipeline natively built for training spatial-temporal or convolutional models.
-- **Interactive Dashboard:** Features a Streamlit-powered UI to visualize processed satellite frames and monitor model predictions.
-
-## 🛠️ Tech Stack
-
-- **Deep Learning Framework:** PyTorch, TorchVision
-- **Data Processing:** H5Py, NumPy, SciPy, OpenCV (cv2)
-- **Visualization & UI:** Streamlit, Matplotlib
+By processing multi-spectral INSAT-3D satellite imagery paired with NOAA IBTrACS best-track data, OrbitCast-XAI forecasts future storm frames ($T+1$) and provides transparent, automated decision-support narratives aligned with **India Meteorological Department (IMD)** operational standards.
 
 ---
 
-## 📂 Project Structure
+## Key Features
 
-```text
-orbitcast_project/
-├── raw_data/               # Downloaded raw INSAT-3D .h5 files (grouped by event)
-│   ├── cyclone_01/
-│   └── cyclone_02/
-├── processed_patches/      # Preprocessed & exported 4-channel .npz patches
-├── models/                 # Saved PyTorch model checkpoints (.pth)
-├── dataset.py              # Custom PyTorch Dataset module for training
-├── export_patches.py       # Data preprocessing and patch extraction script
-├── train.py                # Deep learning model training pipeline
-└── app.py                  # Streamlit dashboard interface
+- **Spatio-Temporal Sequence Forecasting:** Utilizes `HybridOrbitCastNet` (CNN + ConvLSTM) to ingest multi-channel satellite frame sequences ($T=0$) and forecast short-term storm evolution ($T+1$).
+- **IMD Stage Classification & Operational Metrics:** Automatically estimates sustained wind speeds (kts) and categorizes tropical cyclones into official IMD intensity stages (LPA, DD, CS, VSCS, SuCS).
+- **Explainable AI (Grad-CAM & SHAP):** Generates gradient-weighted class activation heatmaps to highlight cloud-top convective density and eyewall structural focus areas.
+- **Automated Text Narratives:** Translates complex neural network feature activations into human-readable risk narratives for meteorological decision-makers.
+- **Interactive Streamlit UI:** A clean, cloud-hosted dashboard supporting pre-loaded `.npz` INSAT-3D patches or user-uploaded satellite files.
+
+---
+
+## Tech Stack & Architecture
+
+- **Deep Learning Engine:** PyTorch, Torchvision, OpenCV, Albumentations
+- **Data Processing & Pipelines:** Python, NumPy, Pandas, xarray, h5py, netCDF4
+- **Baselines & ML Benchmark:** scikit-learn (Random Forest, XGBoost), Persistence & Linear Extrapolation Tracks
+- **Explainability (XAI):** Grad-CAM, SHAP, Custom Natural Language Narrative Generator
+- **Frontend & Deployment:** Streamlit Cloud, Git LFS (Large File Storage for `.pth` model checkpoints)
+
+---
+
+## Pipeline Workflow
+
+```
+┌────────────────────────┐    ┌────────────────────────┐    ┌────────────────────────┐
+│  INSAT-3D Satellite    │───>│ Geospatial Alignment   │───>│ HybridOrbitCastNet     │
+│  (MOSDAC HDF5/netCDF)  │    │  & IBTrACS Pairing     │    │  (CNN + ConvLSTM)      │
+└────────────────────────┘    └────────────────────────┘    └────────────────────────┘
+                                                                        │
+                                                                        ▼
+┌────────────────────────┐    ┌────────────────────────┐    ┌────────────────────────┐
+│ Interactive Streamlit  │<───│  Grad-CAM Activation   │<───│  Metrics, Intensity,   │
+│ Dashboard Deployment   │    │  Heatmaps & XAI Text   │    │  & Spatio-temporal T+1 │
+└────────────────────────┘    └────────────────────────┘    └────────────────────────┘
 ```
 
 ---
 
-## 🚀 Getting Started
+## Dataset & Validation Strategy
 
-### 1. Prerequisites
+- **Data Sources:**
+  - [MOSDAC (ISRO)](https://www.mosdac.gov.in) — INSAT-3D / 3DR meteorological satellite archives.
+  - [NOAA IBTrACS](https://www.ncei.noaa.gov/products/international-best-track-archive) — Historical North Indian Ocean cyclone tracks and intensity records.
+  - [India Meteorological Department (IMD)](https://mausam.imd.gov.in) — RSMC cyclone stage classification standards.
+- **Validation Methodology:** Evaluated strictly using **Leave-One-Cyclone-Out (LOCO) cross-validation** (e.g., train on Cyclones A, B, C; evaluate on unseen Cyclone D) to prevent data leakage and guarantee real-world generalization across unseen storms.
 
-Ensure you have Python 3.8 or higher installed on your system.
+---
 
-### 2. Installation
+## Quickstart & Local Setup
 
-Clone this repository and install the required dependencies using `pip`:
-
-```bash
-# Clone the repository
-git clone https://github.com
-cd orbitcast
-
-# Install core dependencies
-pip install torch torchvision numpy scipy h5py streamlit matplotlib opencv-python
-```
-
-### 3. Workflow Execution
-
-#### Step 1: Preprocess the Data
-
-Extract 4-channel image patches from your raw INSAT-3D `.h5` files:
+### 1. Clone the Repository
 
 ```bash
-python export_patches.py
+git clone https://github.com/GauravVerdhanMaheshwari/OrbitCast.git
+cd OrbitCast
 ```
 
-#### Step 2: Train the Model
-
-Run the PyTorch training pipeline using the preprocessed dataset:
+### 2. Set Up Virtual Environment & Dependencies
 
 ```bash
-python train.py
+python -m venv venv
+# On Windows:
+venv\Scripts\activate
+# On Linux/Mac:
+source venv/bin/activate
+
+pip install -r requirements.txt
 ```
 
-#### Step 3: Launch the Dashboard
+### 3. Fetch Model Weights via Git LFS
 
-Run the interactive Streamlit application to visualize results:
+```bash
+git lfs install
+git lfs pull
+```
+
+### 4. Run the Streamlit Dashboard Locally
 
 ```bash
 streamlit run app.py
@@ -90,18 +96,27 @@ streamlit run app.py
 
 ---
 
-## 💡 Code Architecture Quick View
+## Project Directory Structure
 
-### Data Loading (`dataset.py`)
-
-The pipeline uses a custom PyTorch dataset to load the `.npz` files efficiently on the fly during training:
-
-```python
-import numpy as np
-from torch.utils.data import Dataset
-
-class OrbitCastDataset(Dataset):
-    def __init__(self, patch_dir):
-        # Initialises file paths for 4-channel patches
-        pass
+```text
+OrbitCast/
+├── orbitcast_project/
+│   ├── models/
+│   │   └── hybrid_orbitcast.pth      # Model weights (tracked via Git LFS)
+│   ├── processed_patches/
+│   │   └── patch_0040.npz            # Pre-loaded sample INSAT-3D patches
+│   ├── src/
+│   │   ├── model.py                  # PyTorch HybridOrbitCastNet definition
+│   │   ├── xai.py                    # Grad-CAM and narrative engine
+│   │   └── utils.py                  # Data loading and satellite utilities
+├── app.py                            # Main Streamlit dashboard script
+├── .gitattributes                    # Git LFS configuration
+├── requirements.txt                  # Python dependencies
+└── README.md                         # Documentation
 ```
+
+---
+
+## License
+
+Distributed under the MIT License. See `LICENSE` for more information.
